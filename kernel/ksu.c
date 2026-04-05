@@ -23,8 +23,17 @@
 #if defined(__x86_64__)
 #include <asm/cpufeature.h>
 #include <linux/version.h>
-#ifndef X86_FEATURE_INDIRECT_SAFE
-#error "FATAL: Your kernel is missing the indirect syscall bypass patches!"
+/*
+ * Newer x86_64 kernels may carry the syscall hardening/backport that removes
+ * the indirect syscall-table dispatch KernelSU relies on. Those kernels expose
+ * X86_FEATURE_INDIRECT_SAFE after applying the KernelSU bypass patchset.
+ *
+ * Older kernels such as WSA 5.15.104.4 still dispatch through sys_call_table[]
+ * indirectly and do not define X86_FEATURE_INDIRECT_SAFE, so do not fail the
+ * build there.
+ */
+#if defined(__x86_64__) && defined(X86_FEATURE_INDIRECT_SAFE)
+/* checked at runtime below */
 #endif
 #endif
 
@@ -71,19 +80,22 @@ bool ksu_late_loaded;
 int __init kernelsu_init(void)
 {
 #if defined(__x86_64__)
-    // If the kernel has the hardening patch, X86_FEATURE_INDIRECT_SAFE must be set 
-    if (!boot_cpu_has(X86_FEATURE_INDIRECT_SAFE)) {
-        pr_alert("*************************************************************");
-        pr_alert("**     NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE    **");
-        pr_alert("**                                                         **");
-        pr_alert("**        X86_FEATURE_INDIRECT_SAFE is not enabled!        **");
-        pr_alert("**      KernelSU will abort initialization to prevent      **");
-        pr_alert("**                     kernel panic.                       **");
-        pr_alert("**                                                         **");
-        pr_alert("**     NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE    **");
-        pr_alert("*************************************************************");
-        return -ENOSYS;
-    }
+#ifdef X86_FEATURE_INDIRECT_SAFE
+	/*
+	 * Kernel carries the syscall hardening/bypass framework.
+	 * Require the bypass to be active.
+	 */
+	if (!boot_cpu_has(X86_FEATURE_INDIRECT_SAFE)) {
+		pr_alert("KernelSU: X86_FEATURE_INDIRECT_SAFE is not enabled, aborting\n");
+		return -ENOSYS;
+	}
+#else
+	/*
+	 * Older x86_64 kernels (for example WSA 5.15.104.4) still use indirect
+	 * syscall dispatch via sys_call_table[] and do not need the new bypass.
+	 */
+	pr_info("KernelSU: legacy x86_64 syscall dispatch detected, skipping INDIRECT_SAFE check\n");
+#endif
 #endif
 
 #ifdef MODULE
